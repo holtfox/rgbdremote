@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">Rgbdsend Remote</string>
+    <string name="action_settings">Settings</string>
+    <string name="add_dialog_title">Add Camera</string>
+	<string name="ok">Okay</string>
+	<string name="cancel">Cancel</string>
+</resources>
