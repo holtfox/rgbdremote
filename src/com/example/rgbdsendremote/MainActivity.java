@@ -39,7 +39,7 @@ public class MainActivity extends Activity {
 			builder.setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
 		            public void onClick(DialogInterface dialog, int id) {
 		        	    ImageView iv = new ImageView(MainActivity.this);
-		            	iv.setImageResource(getResources().getIdentifier("ic_menu_add", "drawable", "android"));
+		            	iv.setImageResource(getResources().getIdentifier("ic_menu_refresh", "drawable", "android"));
 		        	    
 		        	    imageLayout.addView(iv, 0);
 		        	    imageViews.add(iv);
@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
 		        	    cameras.add(new Camera(addrprt[0], port));
 		        	    try {
 							cameras.get(cameras.size()-1).connect();
+							
 						} catch (IOException e) {
 							e.printStackTrace();
 						}

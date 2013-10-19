@@ -8,6 +8,8 @@ import java.nio.ByteOrder;
 import java.util.Timer;
 import java.util.TimerTask;
 
+import android.os.AsyncTask;
+
 public class Camera {
 	String address;
 	int port;
@@ -23,6 +25,8 @@ public class Camera {
 	
 	boolean invalid = true;
 	
+	boolean busy = false;
+	
 	public Camera(String address, int port) {
 		this.address = address;
 		this.port = port;
@@ -31,55 +35,102 @@ public class Camera {
 	}
 	
 	public void connect() throws IOException {
-		try {
-			sock.connect(new InetSocketAddress(address, port), timeout*1000);
-		} catch(IOException e) {
-			invalid = true;
-			e.printStackTrace();
-			throw e;
-		}
-		
-		sendCommand("subs");
-		byte[] cmd = new byte[4];
-		recvCommand(cmd, null, 0);
-		
-		if(new String(cmd).equals("okay")) {
-			keepalive = new Timer();
-			keepalive.scheduleAtFixedRate(new TimerTask() {
-				@Override
-				public void run() {
-					Camera.this.sendCommand("aliv");
-					if(!Camera.this.isValid())
-						this.cancel();
-				}			
-			}, 0, timeout*1000/2);
-			invalid = false;			
-		} else {
+		new ConnectTask().execute();
+	}
+	
+	private void waitBusy() {
+		while(busy) {
 			try {
-				sock.close();
-			} catch (IOException e) {
-				e.printStackTrace();
+				Thread.sleep(100);
+			} catch (InterruptedException e2) {
+				e2.printStackTrace();
 			}
-			throw new IOException("Rejected by Server.");
 		}		
 	}
 	
-	public void disconnect() {
-		keepalive.cancel();
-		sendCommand("quit");	
-		invalid = true;
-		try {
-			sock.close();
-		} catch (IOException e) {
-			e.printStackTrace();
+	private class ConnectTask extends AsyncTask<Void, Void, Long> {
+
+		@Override
+		protected Long doInBackground(Void... arg0) {
+			waitBusy();
+			busy = true;
+			
+			try {
+				sock.connect(new InetSocketAddress(address, port), timeout*1000);
+			} catch(IOException e) {
+				invalid = true;
+				return (long) 0;
+			}
+			
+			sendCommand("subs");
+			byte[] cmd = new byte[4];
+			try {
+				recvCommand(cmd, null, 0);
+			} catch (IOException e1) {
+				invalid = true;
+				e1.printStackTrace();
+				return (long) 0;				
+			}
+			
+			if(new String(cmd).equals("okay")) {
+				keepalive = new Timer();
+				keepalive.scheduleAtFixedRate(new TimerTask() {
+					@Override
+					public void run() {
+						Camera.this.sendCommand("aliv");
+						if(!Camera.this.isValid())
+							this.cancel();
+					}			
+				}, 0, timeout*1000/2);
+				invalid = false;			
+			} else {
+				try {
+					sock.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				return (long) 0;				
+			}
+			
+			return (long) 1;
 		}
+		
+		@Override
+		protected void onPostExecute(Long res) {
+			busy = false;
+		}
+	}
+	
+	public void disconnect() {
+		new AsyncTask<Void, Void, Void>() {
+			@Override
+			protected Void doInBackground(Void... params) {
+				waitBusy();
+				busy = true;
+				keepalive.cancel();
+				sendCommand("quit");	
+				invalid = true;
+				try {
+					sock.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				return null;
+			}
+			
+			@Override
+			protected void onPostExecute(Void res) {
+				busy = false;
+			}
+		}.execute();
+			
 	}
 	
 	public boolean isValid() {
 		return !invalid;
 	}
 	
-	public void sendCommand(String cmd) {
+	private void sendCommand(String cmd) {
 		try {
 			sock.getOutputStream().write(cmd.getBytes(), 0, 4);
 		} catch (IOException e) {
@@ -102,7 +153,7 @@ public class Camera {
 		}
 	}
 	
-	public int recvCommand(byte[] cmd, byte[] buffer, int max) throws IOException {
+	private int recvCommand(byte[] cmd, byte[] buffer, int max) throws IOException {
 		try {
 			recvAll(cmd, 4);
 		} catch (IOException e) {
@@ -141,39 +192,97 @@ public class Camera {
 		return 0;
 	}
 	
+	private class RequestThumbnailTask extends AsyncTask<Void, Void, Void> {
+
+		@Override
+		protected Void doInBackground(Void... params) {
+			waitBusy();
+			busy = true;
+			
+			sendCommand("thmb");
+			byte[] cmd = new byte[4];
+			int n = -1;
+			
+			do {		
+				try {
+					n = recvCommand(cmd, thumbbuf, thumbbuf.length);
+				} catch (IOException e) {
+					invalid = false;
+					e.printStackTrace();
+				}
+				System.out.println(new String(cmd));
+			} while(isValid() && n != -1 && new String(cmd).equals("aliv"));
+			
+			if(!new String(cmd).equals("stmb"))
+				return null;
+			if(n == -1)
+				System.err.println("Thumbnail buffer too small!");
+			
+			return null;
+		}
+		
+		@Override
+		protected void onPostExecute(Void res) {
+			busy = false;
+		}
+	}
+	
 	public void requestThumbnail() throws IOException {
-		sendCommand("thmb");
-		byte[] cmd = new byte[4];
-		int n;
-		
-		do {		
-			n = recvCommand(cmd, thumbbuf, thumbbuf.length);
-			System.out.println(new String(cmd));
-		} while(isValid() && n != -1 && new String(cmd).equals("aliv"));
-		
-		if(!new String(cmd).equals("stmb"))
-			return;
-		if(n == -1)
-			throw new IOException("Thumbnail buffer too small!");
+		new RequestThumbnailTask().execute();
 	}
 	
 	public void requestCapture() {
-		sendCommand("capt");
+		new AsyncTask<Void, Void, Void>() {
+		@Override
+		protected Void doInBackground(Void... params) {
+			byte cmd[] = new byte[4];
+			
+			waitBusy();
+			busy = true;
+			
+			sendCommand("capt");
+			try {
+				recvCommand(cmd, null, 0);
+			} catch (IOException e) {
+				invalid = true;
+				e.printStackTrace();
+			}
+			return null;
+		}
+		@Override
+		protected void onPostExecute(Void res) {
+			busy = false;
+		}
+		}.execute();
 	}
 	
-	public boolean waitOk(){
-		byte[] cmd = new byte[4];
+	public void waitOk(){
+		new AsyncTask<Void, Void, Long>() {
+			@Override
+			protected Long doInBackground(Void... params) {
+				waitBusy();
+				busy = true;
+				byte[] cmd = new byte[4];
+
+				try {
+					recvCommand(cmd, null, 0);
+				} catch (IOException e) {
+					invalid = true;
+					return (long) 0;
+				}
+
+				if(new String(cmd).equals("okay"))
+					return (long) 1;
+
+				return (long) 0;
+			}
+			
+			@Override
+			protected void onPostExecute(Long res) {
+				busy = false;
+			}
+		}.execute();
 		
-		try {
-			recvCommand(cmd, null, 0);
-		} catch (IOException e) {
-			return false;
-		}
-				
-		if(new String(cmd).equals("okay"))
-			return true;
-		
-		return false;
 	}
 	
 	public byte[] getThumbnail() {
