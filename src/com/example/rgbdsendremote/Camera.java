@@ -11,17 +11,16 @@ import java.util.TimerTask;
 import android.os.AsyncTask;
 
 public class Camera {
+	static final int TIMEOUT = 3*1000; // ms
+	static final int CAPTURE_TIMEOUT = 10*1000; // ms
+	
 	String address;
 	int port;
 	Socket sock;
 	
 	Timer keepalive;
-	
-	final int timeout = 3;
-	
-	long lastcommand = System.currentTimeMillis();
-	
-	byte[] thumbbuf = new byte[32768];
+			
+	byte[] thumbbuf = new byte[65536];
 	
 	boolean invalid = true;
 	
@@ -34,8 +33,65 @@ public class Camera {
 		sock = new Socket();
 	}
 	
-	public void connect() throws IOException {
-		new ConnectTask().execute();
+	public void connect(final OnPostExecuteListener listener) {
+		new AsyncTask<Void, Void, Long>() {
+
+			@Override
+			protected Long doInBackground(Void... arg0) {
+				waitBusy();
+				busy = true;
+				
+				try {
+					sock.connect(new InetSocketAddress(address, port), TIMEOUT);
+				} catch(IOException e) {
+					invalid = true;
+					return (long) 0;
+				}
+								
+				sendCommand("subs");
+								
+				byte[] cmd = new byte[4];
+				try {
+					recvCommand(cmd, null, 0);
+				} catch (IOException e1) {
+					invalid = true;
+					System.err.println("Error: Rejected by Server.");
+					return (long) 0;				
+				}
+				
+				if(new String(cmd).equals("okay")) {
+					keepalive = new Timer();
+					keepalive.scheduleAtFixedRate(new TimerTask() {
+						@Override
+						public void run() {
+							if(!busy) {
+								Camera.this.sendCommand("aliv");
+								if(!Camera.this.isValid())
+									keepalive.cancel();
+							}
+						}			
+					}, 0, TIMEOUT/2);
+					
+					invalid = false;
+				} else {
+					invalid = true;
+					try {
+						sock.close();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+					return (long) 0;				
+				}
+				
+				return (long) 1;
+			}
+			
+			@Override
+			protected void onPostExecute(Long res) {
+				listener.onPostExecute();
+				busy = false;
+			}
+		}.execute();
 	}
 	
 	private void waitBusy() {
@@ -48,58 +104,6 @@ public class Camera {
 		}		
 	}
 	
-	private class ConnectTask extends AsyncTask<Void, Void, Long> {
-
-		@Override
-		protected Long doInBackground(Void... arg0) {
-			waitBusy();
-			busy = true;
-			
-			try {
-				sock.connect(new InetSocketAddress(address, port), timeout*1000);
-			} catch(IOException e) {
-				invalid = true;
-				return (long) 0;
-			}
-			
-			sendCommand("subs");
-			byte[] cmd = new byte[4];
-			try {
-				recvCommand(cmd, null, 0);
-			} catch (IOException e1) {
-				invalid = true;
-				e1.printStackTrace();
-				return (long) 0;				
-			}
-			
-			if(new String(cmd).equals("okay")) {
-				keepalive = new Timer();
-				keepalive.scheduleAtFixedRate(new TimerTask() {
-					@Override
-					public void run() {
-						Camera.this.sendCommand("aliv");
-						if(!Camera.this.isValid())
-							this.cancel();
-					}			
-				}, 0, timeout*1000/2);
-				invalid = false;			
-			} else {
-				try {
-					sock.close();
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-				return (long) 0;				
-			}
-			
-			return (long) 1;
-		}
-		
-		@Override
-		protected void onPostExecute(Long res) {
-			busy = false;
-		}
-	}
 	
 	public void disconnect() {
 		new AsyncTask<Void, Void, Void>() {
@@ -107,7 +111,10 @@ public class Camera {
 			protected Void doInBackground(Void... params) {
 				waitBusy();
 				busy = true;
-				keepalive.cancel();
+				if(keepalive != null) {
+					keepalive.cancel();
+					keepalive = null;
+				}
 				sendCommand("quit");	
 				invalid = true;
 				try {
@@ -135,39 +142,51 @@ public class Camera {
 			sock.getOutputStream().write(cmd.getBytes(), 0, 4);
 		} catch (IOException e) {
 			invalid = true;
-			e.printStackTrace();
-		}		
+//			disconnect();
+			System.err.printf("Error: Sending Command '%s' failed.\n", cmd);
+		}
+		
 	}
 	
-	private void recvAll(byte[] buffer, int len) throws IOException {
+	private void recvAll(byte[] buffer, int len, int timeout) throws IOException {
 		int read = 0;
+		long lastrecv = System.currentTimeMillis();
 		while(read < len) {
-			int n = sock.getInputStream().read(buffer, read, len-read);
-			if(n == -1 || System.currentTimeMillis() - lastcommand > timeout*1000)
+			int n = 0;
+			
+			if(sock.getInputStream().available() > 0) {
+				n = sock.getInputStream().read(buffer, read, len-read);
+			} else {
+				try {
+					Thread.sleep(50);
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
+			
+			if(System.currentTimeMillis() - lastrecv > timeout)
 				throw new IOException("Failed to receive everything.");
 			
-			read += n;
-			
-			if(n > 0)
-				lastcommand = System.currentTimeMillis();
+			if(n > 0) {
+				read += n;
+				lastrecv = System.currentTimeMillis();
+			}
 		}
 	}
 	
-	private int recvCommand(byte[] cmd, byte[] buffer, int max) throws IOException {
+	private int recvCommand_t(byte[] cmd, byte[] buffer, int max, int timeout) throws IOException {
 		try {
-			recvAll(cmd, 4);
+			recvAll(cmd, 4, timeout);
 		} catch (IOException e) {
-			invalid = true;
-			e.printStackTrace();
+			disconnect();			
+			System.err.println("Error: Receiving Command failed.");
 			return 0;
 		}
 		
-		lastcommand = System.currentTimeMillis();
-		
-		if(new String(cmd).equals("stmb")) {
+		if(new String(cmd).equals("stmb")) { // stmb is the only data receiving command so far
 			byte lenbuf[] = new byte[4];
 			try {
-				recvAll(lenbuf, 4);
+				recvAll(lenbuf, 4, timeout);
 			} catch (IOException e) {
 				e.printStackTrace();
 				throw e;
@@ -180,58 +199,70 @@ public class Camera {
 				return -1;
 			
 			try {
-				recvAll(buffer, len);
+				recvAll(buffer, len, timeout);
 			} catch (IOException e) {
-				e.printStackTrace();
-				throw e;
+				disconnect();
+				System.err.println("Error: Receiving Command Data failed.");
+				return 0;
 			}
 			
+			buffer[0] = 1;
 			return len;
 		}
 		
 		return 0;
 	}
 	
-	private class RequestThumbnailTask extends AsyncTask<Void, Void, Void> {
-
-		@Override
-		protected Void doInBackground(Void... params) {
-			waitBusy();
-			busy = true;
-			
-			sendCommand("thmb");
-			byte[] cmd = new byte[4];
-			int n = -1;
-			
-			do {		
-				try {
-					n = recvCommand(cmd, thumbbuf, thumbbuf.length);
-				} catch (IOException e) {
-					invalid = false;
-					e.printStackTrace();
-				}
-				System.out.println(new String(cmd));
-			} while(isValid() && n != -1 && new String(cmd).equals("aliv"));
-			
-			if(!new String(cmd).equals("stmb"))
-				return null;
-			if(n == -1)
-				System.err.println("Thumbnail buffer too small!");
-			
-			return null;
-		}
+	private int recvCommand(byte[] cmd, byte[] buffer, int max) throws IOException {
+		return recvCommand_t(cmd, buffer, max, TIMEOUT);
+	}
 		
-		@Override
-		protected void onPostExecute(Void res) {
-			busy = false;
-		}
+	public void requestThumbnail(final OnPostExecuteListener listener) throws IOException {
+		new AsyncTask<Void, Void, Void>() {
+
+			@Override
+			protected Void doInBackground(Void... params) {
+				waitBusy();
+				busy = true;
+				
+				sendCommand("thmb");
+				byte[] cmd = new byte[4];
+				int n = -1;
+				
+				try {
+					Thread.sleep(2*1000);
+				} catch (InterruptedException e1) {
+					e1.printStackTrace();
+				}
+				
+				try {
+					n = recvCommand_t(cmd, thumbbuf, thumbbuf.length, CAPTURE_TIMEOUT);
+				} catch (IOException e) {
+					disconnect();
+					System.err.println("Error: Receiving Thumbnail failed.");					
+				}
+				
+				if(!new String(cmd).equals("stmb"))
+					return null;
+				if(n == -1)
+					System.err.println("Error: Thumbnail buffer too small!");
+				
+				return null;
+			}
+			
+			@Override
+			protected void onPostExecute(Void res) {
+				busy = false;
+				listener.onPostExecute();
+			}
+		}.execute();
 	}
 	
-	public void requestThumbnail() throws IOException {
-		new RequestThumbnailTask().execute();
+	public interface OnPostExecuteListener {
+		public void onPostExecute();
 	}
 	
-	public void requestCapture() {
+	public void requestCapture(final OnPostExecuteListener listener) {
 		new AsyncTask<Void, Void, Void>() {
 		@Override
 		protected Void doInBackground(Void... params) {
@@ -242,7 +273,7 @@ public class Camera {
 			
 			sendCommand("capt");
 			try {
-				recvCommand(cmd, null, 0);
+				recvCommand_t(cmd, null, 0, CAPTURE_TIMEOUT);
 			} catch (IOException e) {
 				invalid = true;
 				e.printStackTrace();
@@ -252,38 +283,11 @@ public class Camera {
 		@Override
 		protected void onPostExecute(Void res) {
 			busy = false;
+			listener.onPostExecute();
 		}
 		}.execute();
 	}
 	
-	public void waitOk(){
-		new AsyncTask<Void, Void, Long>() {
-			@Override
-			protected Long doInBackground(Void... params) {
-				waitBusy();
-				busy = true;
-				byte[] cmd = new byte[4];
-
-				try {
-					recvCommand(cmd, null, 0);
-				} catch (IOException e) {
-					invalid = true;
-					return (long) 0;
-				}
-
-				if(new String(cmd).equals("okay"))
-					return (long) 1;
-
-				return (long) 0;
-			}
-			
-			@Override
-			protected void onPostExecute(Long res) {
-				busy = false;
-			}
-		}.execute();
-		
-	}
 	
 	public byte[] getThumbnail() {
 		return thumbbuf;

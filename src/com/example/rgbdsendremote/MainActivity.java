@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import android.os.Bundle;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.ProgressDialog;
 import android.content.DialogInterface;
 import android.graphics.BitmapFactory;
 import android.text.InputType;
@@ -51,12 +52,21 @@ public class MainActivity extends Activity {
 		        	    	port = Integer.parseInt(addrprt[1]);
 		        	    
 		        	    cameras.add(new Camera(addrprt[0], port));
-		        	    try {
-							cameras.get(cameras.size()-1).connect();
-							
-						} catch (IOException e) {
-							e.printStackTrace();
-						}
+		        	    
+		        	    final ProgressDialog progr = new ProgressDialog(MainActivity.this);
+						
+		        	    progr.setCancelable(false);
+						progr.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+						progr.setMessage("Connecting");
+						progr.show();	
+						
+						cameras.get(cameras.size()-1).connect(new Camera.OnPostExecuteListener() {
+							@Override
+							public void onPostExecute() {
+								progr.dismiss();
+							}
+						});
+						
 		            }
 		        });
 			builder.setNegativeButton(R.string.cancel, new DialogInterface.OnClickListener(){
@@ -72,7 +82,22 @@ public class MainActivity extends Activity {
 	};
 	
 	private class ThumbnailListener implements OnClickListener {
-
+		private class ThumbnailReceivedListener implements Camera.OnPostExecuteListener {
+			Camera cam;
+			ImageView iv;
+			
+			@Override
+			public void onPostExecute() {
+				System.out.println(cam.getThumbnail().length);
+				iv.setImageBitmap(BitmapFactory.decodeByteArray(cam.getThumbnail(), 0, cam.getThumbnail().length));
+			}
+			
+			ThumbnailReceivedListener(Camera cam, ImageView iv) {
+				this.cam = cam;
+				this.iv = iv;				
+				
+			}
+		}
 		@Override
 		public void onClick(View v) {
 			for(int i = 0; i < cameras.size(); i++) {
@@ -82,13 +107,12 @@ public class MainActivity extends Activity {
 				}
 				
 				try {
-					cameras.get(i).requestThumbnail();
+					cameras.get(i).requestThumbnail(new ThumbnailReceivedListener(cameras.get(i), imageViews.get(i)));
 				} catch (IOException e) {
 					imageViews.get(i).setImageResource(getResources().getIdentifier("ic_menu_report_image", "drawable", "android"));
 					e.printStackTrace();
 					continue;
-				}
-				imageViews.get(i).setImageBitmap(BitmapFactory.decodeByteArray(cameras.get(i).getThumbnail(), 0, cameras.size()));
+				}				
 			}
 		}
 		
@@ -117,19 +141,33 @@ public class MainActivity extends Activity {
         bcapt.setOnClickListener(new OnClickListener() {
 			@Override
 			public void onClick(View v) {
+				final ProgressDialog progr = new ProgressDialog(MainActivity.this);
+				final int[] working = new int[1];
+				working[0] = cameras.size();
+				progr.setCancelable(false);
+				progr.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+				progr.setMessage("Capturing");
+				progr.show();				
+								
 				for(int i = 0; i < cameras.size(); i++) {
-					cameras.get(i).requestCapture();
-				}
-				
-				for(int i = 0; i < cameras.size(); i++) {
-					cameras.get(i).waitOk();
-				}
+					if(!cameras.get(i).isValid())
+						imageViews.get(i).setImageResource(getResources().getIdentifier("ic_menu_report_image", "drawable", "android"));
+					
+					
+					cameras.get(i).requestCapture(new Camera.OnPostExecuteListener() {
+						public void onPostExecute() {
+							working[0]--;
+							if(working[0] == 0)
+								progr.dismiss();
+						}
+					});
+				}				
 			}
         });
         
         buttons.setGravity(Gravity.BOTTOM);
         
-//        buttons.addView(bthumb);
+        buttons.addView(bthumb);
         buttons.addView(bcapt);
         
         ImageButton addnew = new ImageButton(this);
@@ -148,6 +186,17 @@ public class MainActivity extends Activity {
         // Inflate the menu; this adds items to the action bar if it is present.
         getMenuInflater().inflate(R.menu.main, menu);
         return true;
+    }
+    
+    public void onDestroy() {
+    	for(int i = 0; i < cameras.size(); i++) {
+    		if(cameras.get(i) != null && cameras.get(i).keepalive != null)
+    			cameras.get(i).keepalive.cancel();
+    	}
+    	
+    	imageViews.clear();
+    	cameras.clear();
+    	super.onDestroy();
     }
     
 }
