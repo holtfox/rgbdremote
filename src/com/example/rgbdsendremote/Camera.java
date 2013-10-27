@@ -206,7 +206,6 @@ public class Camera {
 				return 0;
 			}
 			
-			buffer[0] = 1;
 			return len;
 		}
 		

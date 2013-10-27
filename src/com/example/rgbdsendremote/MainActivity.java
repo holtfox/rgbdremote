@@ -19,6 +19,7 @@ import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
 	LinearLayout mainLayout;
@@ -39,11 +40,7 @@ public class MainActivity extends Activity {
 						
 			builder.setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
 		            public void onClick(DialogInterface dialog, int id) {
-		        	    ImageView iv = new ImageView(MainActivity.this);
-		            	iv.setImageResource(getResources().getIdentifier("ic_menu_refresh", "drawable", "android"));
-		        	    
-		        	    imageLayout.addView(iv, 0);
-		        	    imageViews.add(iv);
+		        	   
 		        	    
 		        	    int port = 11222;
 		        	    String input = address.getText().toString();
@@ -51,7 +48,7 @@ public class MainActivity extends Activity {
 		        	    if(addrprt.length >= 2)
 		        	    	port = Integer.parseInt(addrprt[1]);
 		        	    
-		        	    cameras.add(new Camera(addrprt[0], port));
+		        	    final Camera c = new Camera(addrprt[0], port);
 		        	    
 		        	    final ProgressDialog progr = new ProgressDialog(MainActivity.this);
 						
@@ -60,9 +57,21 @@ public class MainActivity extends Activity {
 						progr.setMessage("Connecting");
 						progr.show();	
 						
-						cameras.get(cameras.size()-1).connect(new Camera.OnPostExecuteListener() {
+						c.connect(new Camera.OnPostExecuteListener() {
 							@Override
 							public void onPostExecute() {
+								if(c.isValid()) {
+									ImageView iv = new ImageView(MainActivity.this);
+									iv.setImageResource(getResources().getIdentifier("ic_menu_refresh", "drawable", "android"));
+					        	    
+									imageLayout.addView(iv, 0);
+									imageViews.add(iv);
+									
+									cameras.add(c);
+								} else {
+									Toast t = Toast.makeText(MainActivity.this, "Connection failed.", Toast.LENGTH_SHORT);
+									t.show();
+								}
 								progr.dismiss();
 							}
 						});
@@ -88,7 +97,6 @@ public class MainActivity extends Activity {
 			
 			@Override
 			public void onPostExecute() {
-				System.out.println(cam.getThumbnail().length);
 				iv.setImageBitmap(BitmapFactory.decodeByteArray(cam.getThumbnail(), 0, cam.getThumbnail().length));
 			}
 			
