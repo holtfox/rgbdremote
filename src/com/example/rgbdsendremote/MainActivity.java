@@ -2,18 +2,22 @@ package com.example.rgbdsendremote;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Locale;
 
 import android.os.Bundle;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.DialogInterface;
+import android.content.SharedPreferences;
 import android.graphics.BitmapFactory;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.Menu;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.View.OnLongClickListener;
+import android.view.ViewManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -26,6 +30,62 @@ public class MainActivity extends Activity {
 	LinearLayout imageLayout;
 	ArrayList<ImageView> imageViews = new ArrayList<ImageView>();
 	ArrayList<Camera> cameras = new ArrayList<Camera>();
+	
+	public void addCamera(String input) {
+		int port = 11222;
+	    String addrprt[] = input.split(":");
+	    if(addrprt.length >= 2)
+	    	port = Integer.parseInt(addrprt[1]);
+	    
+	    final Camera c = new Camera(addrprt[0], port);
+	    
+	    final ProgressDialog progr = new ProgressDialog(MainActivity.this);
+		
+	    progr.setCancelable(false);
+		progr.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+		progr.setMessage("Connecting");
+		progr.show();	
+		
+		c.connect(new Camera.OnPostExecuteListener() {
+			@Override
+			public void onPostExecute() {
+				ImageView iv = new ImageView(MainActivity.this);
+				iv.setImageResource(getResources().getIdentifier("ic_menu_refresh", "drawable", "android"));
+	        	iv.setLongClickable(true);
+	        	
+				imageLayout.addView(iv, 0);
+				imageViews.add(iv);
+					
+				cameras.add(c);
+				
+				iv.setOnLongClickListener(new OnLongClickListener() {
+					public boolean onLongClick(final View arg0) {
+						AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
+						builder.setMessage("Delete this Sensor?");
+						builder.setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
+				            public void onClick(DialogInterface dialog, int id) {
+				            	cameras.remove(c);
+								imageViews.remove(arg0);
+								((ViewManager)arg0.getParent()).removeView(arg0);
+				            }
+				        });
+												
+						AlertDialog dialog = builder.create();
+						dialog.show();
+						return false;
+					}
+	        		
+	        	});
+				
+				if (!c.isValid()){
+					iv.setImageResource(getResources().getIdentifier("ic_menu_report_image", "drawable", "android"));
+					Toast t = Toast.makeText(MainActivity.this, "Connection failed.", Toast.LENGTH_SHORT);
+					t.show();
+				}
+				progr.dismiss();
+			}
+		});
+	}
 	
 	private class AddCamListener implements OnClickListener {
 		public void onClick(View v) {
@@ -40,41 +100,7 @@ public class MainActivity extends Activity {
 						
 			builder.setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
 		            public void onClick(DialogInterface dialog, int id) {
-		        	   
-		        	    
-		        	    int port = 11222;
-		        	    String input = address.getText().toString();
-		        	    String addrprt[] = input.split(":");
-		        	    if(addrprt.length >= 2)
-		        	    	port = Integer.parseInt(addrprt[1]);
-		        	    
-		        	    final Camera c = new Camera(addrprt[0], port);
-		        	    
-		        	    final ProgressDialog progr = new ProgressDialog(MainActivity.this);
-						
-		        	    progr.setCancelable(false);
-						progr.setProgressStyle(ProgressDialog.STYLE_SPINNER);
-						progr.setMessage("Connecting");
-						progr.show();	
-						
-						c.connect(new Camera.OnPostExecuteListener() {
-							@Override
-							public void onPostExecute() {
-								if(c.isValid()) {
-									ImageView iv = new ImageView(MainActivity.this);
-									iv.setImageResource(getResources().getIdentifier("ic_menu_refresh", "drawable", "android"));
-					        	    
-									imageLayout.addView(iv, 0);
-									imageViews.add(iv);
-									
-									cameras.add(c);
-								} else {
-									Toast t = Toast.makeText(MainActivity.this, "Connection failed.", Toast.LENGTH_SHORT);
-									t.show();
-								}
-								progr.dismiss();
-							}
-						});
+		            	addCamera(address.getText().toString());   	    
 						
 		            }
 		        });
@@ -186,6 +212,15 @@ public class MainActivity extends Activity {
         mainLayout.addView(imageLayout);
         mainLayout.addView(buttons);
         setContentView(mainLayout);
+        
+        int i = 0;
+        SharedPreferences prefs = getPreferences(Activity.MODE_PRIVATE);
+        String key = String.format(Locale.ENGLISH, "camera%02d", i);
+        while(prefs.contains(key)) {
+        	addCamera(prefs.getString(key, "192.168.1.235:11222"));
+        	i++;
+        	key = String.format(Locale.ENGLISH, "camera%02d", i);
+        }
     }
 
 
@@ -197,11 +232,19 @@ public class MainActivity extends Activity {
     }
     
     public void onDestroy() {
+    	SharedPreferences.Editor prefs = getPreferences(Activity.MODE_PRIVATE).edit();
+    	prefs.clear();
     	for(int i = 0; i < cameras.size(); i++) {
-    		if(cameras.get(i) != null && cameras.get(i).keepalive != null)
-    			cameras.get(i).keepalive.cancel();
+    		if(cameras.get(i) != null) {
+    			prefs.putString(String.format(Locale.ENGLISH, "camera%02d", i), String.format(Locale.ENGLISH, "%s:%d", cameras.get(i).address, cameras.get(i).port)); 
+    			System.out.println(String.format(Locale.ENGLISH, "%s:%d", cameras.get(i).address, cameras.get(i).port));
+    			
+    			if(cameras.get(i).keepalive != null)
+    				cameras.get(i).keepalive.cancel();
+    		}
+    			
     	}
-    	
+    	prefs.commit();
     	imageViews.clear();
     	cameras.clear();
     	super.onDestroy();
