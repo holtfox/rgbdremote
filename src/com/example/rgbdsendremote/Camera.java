@@ -33,6 +33,17 @@ public class Camera {
 		sock = new Socket();
 	}
 	
+	@Override
+	protected void finalize() {
+		if(keepalive != null)
+			keepalive.cancel();
+		try {
+			sock.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
 	public void connect(final OnPostExecuteListener listener) {
 		new AsyncTask<Void, Void, Long>() {
 
@@ -91,7 +102,7 @@ public class Camera {
 				listener.onPostExecute();
 				busy = false;
 			}
-		}.execute();
+		}.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 	}
 	
 	private void waitBusy() {
@@ -129,7 +140,7 @@ public class Camera {
 			protected void onPostExecute(Void res) {
 				busy = false;
 			}
-		}.execute();
+		}.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 			
 	}
 	
@@ -254,7 +265,7 @@ public class Camera {
 				busy = false;
 				listener.onPostExecute();
 			}
-		}.execute();
+		}.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 	}
 	
 	public interface OnPostExecuteListener {
@@ -262,11 +273,13 @@ public class Camera {
 	}
 	
 	public void requestCapture(final OnPostExecuteListener listener) {
-		new AsyncTask<Void, Void, Void>() {
+		AsyncTask<Void, Void, Void> task = new AsyncTask<Void, Void, Void>() {
 		@Override
 		protected Void doInBackground(Void... params) {
-			byte cmd[] = new byte[4];
+			if(!isValid())
+				return null;
 			
+			byte cmd[] = new byte[4];
 			waitBusy();
 			busy = true;
 			
@@ -284,7 +297,10 @@ public class Camera {
 			busy = false;
 			listener.onPostExecute();
 		}
-		}.execute();
+		};
+		
+		task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+		
 	}
 	
 	

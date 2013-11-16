@@ -1,16 +1,15 @@
 package com.example.rgbdsendremote;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Locale;
 
 import android.os.Bundle;
+import android.preference.PreferenceManager;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.DialogInterface;
 import android.content.SharedPreferences;
-import android.graphics.BitmapFactory;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.Menu;
@@ -21,15 +20,13 @@ import android.view.ViewManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.Toast;
+import android.widget.ScrollView;
 
 public class MainActivity extends Activity {
 	LinearLayout mainLayout;
-	LinearLayout imageLayout;
-	ArrayList<ImageView> imageViews = new ArrayList<ImageView>();
-	ArrayList<Camera> cameras = new ArrayList<Camera>();
+	LinearLayout cameraLayout;
+	ArrayList<CameraView> cameraViews = new ArrayList<CameraView>();
 	
 	public void addCamera(String input) {
 		int port = 11222;
@@ -49,24 +46,16 @@ public class MainActivity extends Activity {
 		c.connect(new Camera.OnPostExecuteListener() {
 			@Override
 			public void onPostExecute() {
-				ImageView iv = new ImageView(MainActivity.this);
-				iv.setImageResource(getResources().getIdentifier("ic_menu_refresh", "drawable", "android"));
-	        	iv.setLongClickable(true);
-	        	
-				imageLayout.addView(iv, 0);
-				imageViews.add(iv);
-					
-				cameras.add(c);
-				
-				iv.setOnLongClickListener(new OnLongClickListener() {
+				final CameraView cv = new CameraView(MainActivity.this, c);
+				cv.setLongClickable(true);									
+				cv.setOnLongClickListener(new OnLongClickListener() {
 					public boolean onLongClick(final View arg0) {
 						AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
 						builder.setMessage("Delete this Sensor?");
 						builder.setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
 				            public void onClick(DialogInterface dialog, int id) {
-				            	cameras.remove(c);
-								imageViews.remove(arg0);
-								((ViewManager)arg0.getParent()).removeView(arg0);
+				            	cameraViews.remove(cv);
+								((ViewManager)cv.getParent()).removeView(cv);
 				            }
 				        });
 												
@@ -74,14 +63,10 @@ public class MainActivity extends Activity {
 						dialog.show();
 						return false;
 					}
-	        		
-	        	});
+		    	});
 				
-				if (!c.isValid()){
-					iv.setImageResource(getResources().getIdentifier("ic_menu_report_image", "drawable", "android"));
-					Toast t = Toast.makeText(MainActivity.this, "Connection failed.", Toast.LENGTH_SHORT);
-					t.show();
-				}
+				cameraLayout.addView(cv, 0);
+				cameraViews.add(cv);
 				progr.dismiss();
 			}
 		});
@@ -117,36 +102,12 @@ public class MainActivity extends Activity {
 	};
 	
 	private class ThumbnailListener implements OnClickListener {
-		private class ThumbnailReceivedListener implements Camera.OnPostExecuteListener {
-			Camera cam;
-			ImageView iv;
-			
-			@Override
-			public void onPostExecute() {
-				iv.setImageBitmap(BitmapFactory.decodeByteArray(cam.getThumbnail(), 0, cam.getThumbnail().length));
-			}
-			
-			ThumbnailReceivedListener(Camera cam, ImageView iv) {
-				this.cam = cam;
-				this.iv = iv;				
-				
-			}
-		}
 		@Override
 		public void onClick(View v) {
-			for(int i = 0; i < cameras.size(); i++) {
-				if(!cameras.get(i).isValid()) {
-					imageViews.get(i).setImageResource(getResources().getIdentifier("ic_menu_report_image", "drawable", "android"));
-					continue;
-				}
+			for(int i = 0; i < cameraViews.size(); i++) {
+				CameraView cv = cameraViews.get(i);
 				
-				try {
-					cameras.get(i).requestThumbnail(new ThumbnailReceivedListener(cameras.get(i), imageViews.get(i)));
-				} catch (IOException e) {
-					imageViews.get(i).setImageResource(getResources().getIdentifier("ic_menu_report_image", "drawable", "android"));
-					e.printStackTrace();
-					continue;
-				}				
+				cv.requestThumbnail();			
 			}
 		}
 		
@@ -158,9 +119,9 @@ public class MainActivity extends Activity {
         mainLayout = new LinearLayout(this);
         mainLayout.setOrientation(LinearLayout.VERTICAL);
         
-        imageLayout = new LinearLayout(this);
-        imageLayout.setOrientation(LinearLayout.VERTICAL);
-        imageLayout.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT, 2f));
+        cameraLayout = new LinearLayout(this);
+        cameraLayout.setOrientation(LinearLayout.VERTICAL);
+        cameraLayout.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT, 2f));
         
         LinearLayout buttons = new LinearLayout(this);
                 
@@ -177,25 +138,25 @@ public class MainActivity extends Activity {
 			public void onClick(View v) {
 				final ProgressDialog progr = new ProgressDialog(MainActivity.this);
 				final int[] working = new int[1];
-				working[0] = cameras.size();
+				working[0] = cameraViews.size();
 				progr.setCancelable(false);
+								
 				progr.setProgressStyle(ProgressDialog.STYLE_SPINNER);
 				progr.setMessage("Capturing");
 				progr.show();				
-								
-				for(int i = 0; i < cameras.size(); i++) {
-					if(!cameras.get(i).isValid())
-						imageViews.get(i).setImageResource(getResources().getIdentifier("ic_menu_report_image", "drawable", "android"));
-					
-					
-					cameras.get(i).requestCapture(new Camera.OnPostExecuteListener() {
+				
+				System.out.println(cameraViews.size());
+				for(int i = 0; i < cameraViews.size(); i++) {
+					cameraViews.get(i).requestCapture(new Camera.OnPostExecuteListener() {
 						public void onPostExecute() {
 							working[0]--;
-							if(working[0] == 0)
+							if(working[0] <= 0)
 								progr.dismiss();
 						}
 					});
-				}				
+				}
+				if(working[0] == 0)
+					progr.dismiss();
 			}
         });
         
@@ -207,14 +168,17 @@ public class MainActivity extends Activity {
         ImageButton addnew = new ImageButton(this);
         addnew.setImageResource(getResources().getIdentifier("ic_menu_add", "drawable", "android"));
         addnew.setOnClickListener(new AddCamListener());
-        imageLayout.addView(addnew);
-                
-        mainLayout.addView(imageLayout);
+        cameraLayout.addView(addnew);
+
+        ScrollView sv = new ScrollView(this);
+        sv.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT, 2f));
+        sv.addView(cameraLayout);
+        mainLayout.addView(sv);
         mainLayout.addView(buttons);
         setContentView(mainLayout);
         
         int i = 0;
-        SharedPreferences prefs = getPreferences(Activity.MODE_PRIVATE);
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
         String key = String.format(Locale.ENGLISH, "camera%02d", i);
         while(prefs.contains(key)) {
         	addCamera(prefs.getString(key, "192.168.1.235:11222"));
@@ -232,21 +196,18 @@ public class MainActivity extends Activity {
     }
     
     public void onDestroy() {
-    	SharedPreferences.Editor prefs = getPreferences(Activity.MODE_PRIVATE).edit();
+    	SharedPreferences.Editor prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext()).edit();
     	prefs.clear();
-    	for(int i = 0; i < cameras.size(); i++) {
-    		if(cameras.get(i) != null) {
-    			prefs.putString(String.format(Locale.ENGLISH, "camera%02d", i), String.format(Locale.ENGLISH, "%s:%d", cameras.get(i).address, cameras.get(i).port)); 
-    			System.out.println(String.format(Locale.ENGLISH, "%s:%d", cameras.get(i).address, cameras.get(i).port));
-    			
-    			if(cameras.get(i).keepalive != null)
-    				cameras.get(i).keepalive.cancel();
+    	for(int i = 0; i < cameraViews.size(); i++) {
+    		if(cameraViews.get(i) != null) {
+    			Camera c = cameraViews.get(i).camera; 
+    			prefs.putString(String.format(Locale.ENGLISH, "camera%02d", i), String.format(Locale.ENGLISH, "%s:%d", c.address, c.port)); 
+    			System.out.println(String.format(Locale.ENGLISH, "%s:%d", c.address, c.port));
     		}
     			
     	}
     	prefs.commit();
-    	imageViews.clear();
-    	cameras.clear();
+    	cameraViews.clear();
     	super.onDestroy();
     }
     
